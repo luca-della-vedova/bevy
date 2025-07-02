@@ -1,14 +1,21 @@
 pub use bevy_ecs_macros::MapEntities;
+use indexmap::{IndexMap, IndexSet};
 
 use crate::{
-    entity::{hash_map::EntityHashMap, Entity},
+    entity::{hash_map::EntityHashMap, Entity, EntityIndexSet},
     identifier::masks::{IdentifierMask, HIGH_MASK},
     world::World,
 };
 
-use alloc::{collections::VecDeque, vec::Vec};
-use bevy_platform::collections::HashSet;
-use core::hash::BuildHasher;
+use alloc::{
+    collections::{BTreeMap, BTreeSet, VecDeque},
+    vec::Vec,
+};
+use bevy_platform::collections::{HashMap, HashSet};
+use core::{
+    hash::{BuildHasher, Hash},
+    mem,
+};
 use smallvec::SmallVec;
 
 /// Operation to map all contained [`Entity`] fields in a type to new values.
@@ -67,15 +74,106 @@ impl MapEntities for Option<Entity> {
     }
 }
 
-impl<S: BuildHasher + Default> MapEntities for HashSet<Entity, S> {
+impl<K: MapEntities + Eq + Hash, V: MapEntities, S: BuildHasher + Default> MapEntities
+    for HashMap<K, V, S>
+{
     fn map_entities<E: EntityMapper>(&mut self, entity_mapper: &mut E) {
-        *self = self.drain().map(|e| entity_mapper.get_mapped(e)).collect();
+        *self = self
+            .drain()
+            .map(|(mut key_entities, mut value_entities)| {
+                key_entities.map_entities(entity_mapper);
+                value_entities.map_entities(entity_mapper);
+                (key_entities, value_entities)
+            })
+            .collect();
     }
 }
-impl MapEntities for Vec<Entity> {
+
+impl<T: MapEntities + Eq + Hash, S: BuildHasher + Default> MapEntities for HashSet<T, S> {
     fn map_entities<E: EntityMapper>(&mut self, entity_mapper: &mut E) {
-        for entity in self.iter_mut() {
-            *entity = entity_mapper.get_mapped(*entity);
+        *self = self
+            .drain()
+            .map(|mut entities| {
+                entities.map_entities(entity_mapper);
+                entities
+            })
+            .collect();
+    }
+}
+
+impl<K: MapEntities + Eq + Hash, V: MapEntities, S: BuildHasher + Default> MapEntities
+    for IndexMap<K, V, S>
+{
+    fn map_entities<E: EntityMapper>(&mut self, entity_mapper: &mut E) {
+        *self = self
+            .drain(..)
+            .map(|(mut key_entities, mut value_entities)| {
+                key_entities.map_entities(entity_mapper);
+                value_entities.map_entities(entity_mapper);
+                (key_entities, value_entities)
+            })
+            .collect();
+    }
+}
+
+impl<T: MapEntities + Eq + Hash, S: BuildHasher + Default> MapEntities for IndexSet<T, S> {
+    fn map_entities<E: EntityMapper>(&mut self, entity_mapper: &mut E) {
+        *self = self
+            .drain(..)
+            .map(|mut entities| {
+                entities.map_entities(entity_mapper);
+                entities
+            })
+            .collect();
+    }
+}
+
+impl MapEntities for EntityIndexSet {
+    fn map_entities<E: EntityMapper>(&mut self, entity_mapper: &mut E) {
+        *self = self
+            .drain(..)
+            .map(|e| entity_mapper.get_mapped(e))
+            .collect();
+    }
+}
+
+impl<K: MapEntities + Ord, V: MapEntities> MapEntities for BTreeMap<K, V> {
+    fn map_entities<E: EntityMapper>(&mut self, entity_mapper: &mut E) {
+        *self = mem::take(self)
+            .into_iter()
+            .map(|(mut key_entities, mut value_entities)| {
+                key_entities.map_entities(entity_mapper);
+                value_entities.map_entities(entity_mapper);
+                (key_entities, value_entities)
+            })
+            .collect();
+    }
+}
+
+impl<T: MapEntities + Ord> MapEntities for BTreeSet<T> {
+    fn map_entities<E: EntityMapper>(&mut self, entity_mapper: &mut E) {
+        *self = mem::take(self)
+            .into_iter()
+            .map(|mut entities| {
+                entities.map_entities(entity_mapper);
+                entities
+            })
+            .collect();
+    }
+}
+
+impl<T: MapEntities, const N: usize> MapEntities for [T; N] {
+    fn map_entities<E: EntityMapper>(&mut self, entity_mapper: &mut E) {
+        for entities in self.iter_mut() {
+            entities.map_entities(entity_mapper);
+        }
+    }
+}
+
+impl<T: MapEntities> MapEntities for Vec<T> {
+    fn map_entities<E: EntityMapper>(&mut self, entity_mapper: &mut E) {
+        for entities in self.iter_mut() {
+            entities.map_entities(entity_mapper);
         }
     }
 }
